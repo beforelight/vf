@@ -248,6 +248,7 @@ function Model = FastVF(omega, H, Order, Options)
             Model.R0 = zeros(qbar, mbar);
             Model.Rr = zeros(qbar, mbar, nr);
             Model.Rc = zeros(qbar, mbar, nc);
+            Model.Tf = ones(qbar, mbar) * tf(1, 1);
 
             % Model-samples error
             err = 0;
@@ -260,7 +261,7 @@ function Model = FastVF(omega, H, Order, Options)
                     Model.R0(q, m) = c_Hqm(1);
                     Model.Rr(q, m, :) = c_Hqm(2:nr + 1);
                     Model.Rc(q, m, :) = c_Hqm(nr + 2:2:end) + 1j * c_Hqm(nr + 3:2:end);
-
+                    Model.Tf(q, m) = residue2tf(pr, pc, Model.R0(q, m), Model.Rr(q, m, :), Model.Rc(q, m, :));
                     % Plot the given samples vs the model response for the
                     % (1,1) entry of the transfer function (if in debug mode)
                     if Options.debug && q == 1 && m == 1
@@ -315,3 +316,64 @@ function Model = FastVF(omega, H, Order, Options)
     fprintf('Modeling time: %f s\n', toc);
 
     return
+end
+
+function Tf = residue2tf(pr, pc, R0, Rr, Rc)
+    nr = length(pr);
+    nc = length(pc);
+    N = 1 + nr + 2 * nc;
+    % 计算分母的多项式
+    den = 1;
+    for i = 1:nr
+        den = conv(den, [1, -pr(i)]);
+    end
+    for i = 1:nc
+        den = conv(den, [1, -2 * real(pc(i)), abs(pc(i))^2]);
+    end
+
+    % 计算分子的多项式
+    num = zeros(1, N);
+
+    % R0
+    num(1) = R0;
+    % Rr
+    for j = 1:nr % j在外循环
+        tmp = 1;
+        for i = 1:nr
+            if j ~= i
+                tmp = conv(tmp, [1, -pr(i)]);
+            end
+        end
+        for i = 1:nc
+            tmp = conv(tmp, [1, -2 * real(pc(i)), abs(pc(i))^2]);
+        end
+        tmp = Rr(j) * tmp;
+        num = num + [zeros(1, N - length(tmp)), tmp]; %补0后相加
+    end
+    % Rc
+    for j = 1:nc % j在外循环
+        tmp = 1;
+        for i = 1:nr
+            tmp = conv(tmp, [1, -pr(i)]);
+        end
+        for i = 1:nc
+            if j ~= i
+                tmp = conv(tmp, [1, -2 * real(pc(i)), abs(pc(i))^2]);
+            end
+        end
+        tmp = conv([2 * real(Rc(j)), -2 * (real(Rc(j)) * real(pc(j)) + imag(Rc(j)) * imag(pc(j)))], tmp);
+        num = num + [zeros(1, N - length(tmp)), tmp]; %补0后相加
+    end
+    % 去除前置0
+    site_zero = 0;
+    for i = 1:length(num)
+        if num(i) ~= 0
+            site_zero = i;
+            break;
+        end
+    end
+    % if site_zero ~= 0
+    %     num = num(site_zero:length(num));
+    % end
+    Tf = tf(num, den);
+end
