@@ -8,6 +8,9 @@ HH = mg .* cos(agl) + 1j * mg .* sin(agl);
 
 HH = reshape(HH, [1, 1, max(size(HH))]);
 Options.MaxIterations = 15;
+Options.NumeratorConstraint = 3;
+Options.NumeratorConstraint = [0,0,0,1];
+%Options.NumeratorConstraint = [];
 Model = FastVF(ww, HH, 5, Options);
 
 Hmodel = ComputeModelResponse(ww, Model.R0, Model.Rr, Model.Rc, Model.pr, Model.pc);

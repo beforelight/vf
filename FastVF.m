@@ -23,7 +23,7 @@ function Model = FastVF(omega, H, Order, Options)
     %      (default: 1 (enabled) )
     %    - Options.Debug: print and plot extra information. Pause at each
     %    iteration (default: 0 (disabled) )
-    %
+    %    - Options.NumeratorConstraint: 为常数是限制分子项的阶数，为向量时，为0项会限制相应位置的s^n的系数为0
     % Outputs:
     %    - Model.pr: real poles of the model, column vector
     %    - Model.pc: complex poles of the model, one per conjugate pair, column
@@ -71,6 +71,11 @@ function Model = FastVF(omega, H, Order, Options)
     % Debug mode
     if ~exist('Options', 'var') || ~isfield(Options, 'debug')
         Options.debug = 0;
+    end
+
+    % Debug mode
+    if ~exist('Options', 'var') || ~isfield(Options, 'NumeratorConstraint')
+        Options.NumeratorConstraint = 0;
     end
 
     %% Initializations
@@ -257,7 +262,11 @@ function Model = FastVF(omega, H, Order, Options)
                     % Right hand side
                     V_Hqm = squeeze(H(q, m, :));
                     blsq = [real(V_Hqm); imag(V_Hqm)];
-                    c_Hqm = Alsq \ blsq;
+                    if ~isempty(Options.NumeratorConstraint)
+                        c_Hqm = NumeratorConstraintSolver(Alsq, blsq, Options.NumeratorConstraint, pr, pc);
+                    else
+                        c_Hqm = Alsq \ blsq;
+                    end
                     Model.R0(q, m) = c_Hqm(1);
                     Model.Rr(q, m, :) = c_Hqm(2:nr + 1);
                     Model.Rc(q, m, :) = c_Hqm(nr + 2:2:end) + 1j * c_Hqm(nr + 3:2:end);
@@ -376,4 +385,75 @@ function Tf = residue2tf(pr, pc, R0, Rr, Rc)
     %     num = num(site_zero:length(num));
     % end
     Tf = tf(num, den);
+end
+
+function xlsq = NumeratorConstraintSolver(Alsq, blsq, constant, pr, pc)
+    nr = length(pr);
+    nc = length(pc);
+    N = 1 + nr + 2 * nc;
+
+    Xi = []; %下面写错了，每次应该是给一列幅值写成了一行，之后在下面进行转置
+    %计算限制的系数矩阵
+    if 1
+        % 计算分子的多项式
+        num = zeros(1, N);
+        % R0
+        num(1) = 1;
+        Xi(1, :) = num;
+        % Rr
+        for j = 1:nr % j在外循环
+            tmp = 1;
+            for i = 1:nr
+                if j ~= i
+                    tmp = conv(tmp, [1, -pr(i)]);
+                end
+            end
+            for i = 1:nc
+                tmp = conv(tmp, [1, -2 * real(pc(i)), abs(pc(i))^2]);
+            end
+            %tmp = Rr(j) * tmp;
+            Xi(end + 1, :) = [zeros(1, N - length(tmp)), tmp];
+        end
+        % Rc
+        for j = 1:nc % j在外循环
+            tmp = 1;
+            for i = 1:nr
+                tmp = conv(tmp, [1, -pr(i)]);
+            end
+            for i = 1:nc
+                if j ~= i
+                    tmp = conv(tmp, [1, -2 * real(pc(i)), abs(pc(i))^2]);
+                end
+            end
+            tmpr = conv([2, -2 * real(pc(j))], tmp);
+            tmpi = conv(-2 * imag(pc(j)), tmp);
+            Xi(end + 1, :) = [zeros(1, N - length(tmpr)), tmpr];
+            Xi(end + 1, :) = [zeros(1, N - length(tmpi)), tmpi];
+        end
+    end
+
+    % 计算限制矩阵，矩阵的宽等于N，高等于限制为0的an的个数
+    if length(constant) == 1
+        constant = [ones(1, constant + 1), zeros(1, N - 1 - constant)];
+    else
+        constant = [reshape(constant, 1, []), zeros(1, N - length(constant))];
+    end
+
+    %计算 Xi->Blsq
+    Xi = flip(Xi', 1); %翻转每一列
+    Blsq = Xi;
+    Blsq(constant ~= 0, :) = [];
+    M = size(Blsq, 1);
+    %校验Blaq的秩
+    if rank(Blsq) ~= M
+        ME = MException('矩阵的不满秩，%d!=%d', rank(Blaq), M);
+        throw(ME);
+    end
+    %计算最终的最小二乘
+    if 0
+        xlsq2 = [Alsq' * Alsq, Blsq'; Blsq, zeros(M, M)] \ [Alsq' * blsq; zeros(M, 1)];
+        xlsq = xlsq2(1:N);
+    else
+        xlsq = lsqlin(Alsq, blsq, [], [], Blsq, zeros(M, 1)); % 数值精度会比上面那个高很多很多
+    end
 end
